@@ -1,6 +1,6 @@
 import * as RadixDialog from '@radix-ui/react-dialog';
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { classNames } from '~/utils/classNames';
 import { DialogTitle, dialogVariants, dialogBackdropVariants } from './Dialog';
 import { IconButton } from './IconButton';
@@ -10,6 +10,8 @@ import { toast } from 'react-toastify';
 import { useNavigate } from '@remix-run/react';
 import commit from '~/commit.json';
 import Cookies from 'js-cookie';
+import { debug } from '~/lib/debug';
+import type { LogEntry, LogLevel } from '~/lib/debug';
 
 interface SettingsProps {
   open: boolean;
@@ -21,10 +23,48 @@ type TabType = 'chat-history' | 'providers' | 'features' | 'debug';
 // Providers that support base URL configuration
 const URL_CONFIGURABLE_PROVIDERS = ['Ollama', 'LMStudio', 'OpenAILike'];
 
+const getProviderIcon = (providerName: string) => {
+  switch (providerName) {
+    case 'OpenAI':
+      return <img src="/icons/openai.svg" alt="OpenAI" className="h-6 w-6" />;
+    case 'Anthropic':
+      return <img src="/icons/anthropic.svg" alt="Anthropic" className="h-6 w-6" />;
+    case 'Google':
+      return <img src="/icons/google.svg" alt="Google" className="h-6 w-6" />;
+    case 'HuggingFace':
+      return <img src="/icons/huggingface.svg" alt="HuggingFace" className="h-6 w-6" />;
+    case 'Ollama':
+      return <img src="/icons/ollama.svg" alt="Ollama" className="h-6 w-6" />;
+    case 'Mistral':
+      return <img src="/icons/mistral.svg" alt="Mistral" className="h-6 w-6" />;
+    case 'Cohere':
+      return <img src="/icons/cohere.svg" alt="Cohere" className="h-6 w-6" />;
+    case 'Groq':
+      return <img src="/icons/groq.svg" alt="Groq" className="h-6 w-6" />;
+    case 'Together':
+      return <img src="/icons/together.svg" alt="Together" className="h-6 w-6" />;
+    case 'OpenRouter':
+      return <img src="/icons/openrouter.svg" alt="OpenRouter" className="h-6 w-6" />;
+    case 'Deepseek':
+      return <img src="/icons/deepseek.svg" alt="Deepseek" className="h-6 w-6" />;
+    case 'LMStudio':
+      return <img src="/icons/lmstudio.svg" alt="LMStudio" className="h-6 w-6" />;
+    case 'OpenAILike':
+      return <img src="/icons/openailike.svg" alt="OpenAILike" className="h-6 w-6" />;
+    case 'xAI':
+      return <img src="/icons/xai.svg" alt="xAI" className="h-6 w-6" />;
+    default:
+      return <span className="i-ph:plug text-xl text-bolt-elements-textSecondary" />;
+  }
+};
+
 export const Settings = ({ open, onClose }: SettingsProps) => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('chat-history');
-  const [isDebugEnabled, setIsDebugEnabled] = useState(false);
+  const [isDebugEnabled, setIsDebugEnabled] = useState(() => debug.isDebugEnabled());
+  const [isLoggingEnabled, setIsLoggingEnabled] = useState(() => {
+    return localStorage.getItem('devLoggingEnabled') === 'true';
+  });
   const [searchTerm, setSearchTerm] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -113,23 +153,6 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
     .filter((provider) => provider.name.toLowerCase().includes(searchTerm.toLowerCase()))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const handleCopyToClipboard = () => {
-    const debugInfo = {
-      OS: navigator.platform,
-      Browser: navigator.userAgent,
-      ActiveFeatures: providers.filter((provider) => provider.isEnabled).map((provider) => provider.name),
-      BaseURLs: {
-        Ollama: process.env.REACT_APP_OLLAMA_URL,
-        OpenAI: process.env.REACT_APP_OPENAI_URL,
-        LMStudio: process.env.REACT_APP_LM_STUDIO_URL,
-      },
-      Version: versionHash,
-    };
-    navigator.clipboard.writeText(JSON.stringify(debugInfo, null, 2)).then(() => {
-      alert('Debug information copied to clipboard!');
-    });
-  };
-
   const downloadAsJson = (data: any, filename: string) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -158,235 +181,521 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
 
       toast.success('All chats deleted successfully');
       navigate('/', { replace: true });
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete chats');
-      console.error(error);
     } finally {
       setIsDeleting(false);
     }
   };
 
-  const handleExportAllChats = async () => {
+  const handleExportAllChats = async (): Promise<boolean | null> => {
     if (!db) {
       toast.error('Database is not available');
-      return;
+      return null;
     }
 
     try {
-      const allChats = await getAll(db);
       const exportData = {
-        chats: allChats,
+        chats: await getAll(db),
         exportDate: new Date().toISOString(),
       };
 
       downloadAsJson(exportData, `all-chats-${new Date().toISOString()}.json`);
       toast.success('Chats exported successfully');
-    } catch (error) {
+
+      return true;
+    } catch {
       toast.error('Failed to export chats');
-      console.error(error);
+      return false;
     }
   };
 
-  const versionHash = commit.commit; // Get the version hash from commit.json
+  useEffect(() => {
+    localStorage.setItem('devDebugEnabled', isDebugEnabled.toString());
+  }, [isDebugEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('devLoggingEnabled', isLoggingEnabled.toString());
+
+    if (isLoggingEnabled) {
+      const originalConsoleLog = console.log;
+      const originalConsoleInfo = console.info;
+      const originalConsoleWarn = console.warn;
+      const originalConsoleError = console.error;
+
+      console.log = function (...args) {
+        const timestamp = new Date().toISOString();
+        originalConsoleLog.apply(console, [`[${timestamp}] LOG:`, ...args]);
+      };
+
+      console.info = function (...args) {
+        const timestamp = new Date().toISOString();
+        originalConsoleInfo.apply(console, [`[${timestamp}] INFO:`, ...args]);
+      };
+
+      console.warn = function (...args) {
+        const timestamp = new Date().toISOString();
+        originalConsoleWarn.apply(console, [`[${timestamp}] WARN:`, ...args]);
+      };
+
+      console.error = function (...args) {
+        const timestamp = new Date().toISOString();
+        originalConsoleError.apply(console, [`[${timestamp}] ERROR:`, ...args]);
+      };
+
+      return () => {
+        console.log = originalConsoleLog;
+        console.info = originalConsoleInfo;
+        console.warn = originalConsoleWarn;
+        console.error = originalConsoleError;
+      };
+    }
+
+    return undefined;
+  }, [isLoggingEnabled]);
+
+  const handleDebugToggle = (): void => {
+    if (!isDebugEnabled) {
+      debug.enable();
+      debug.info('Debug mode enabled', {
+        version: commit.commit,
+        providers: providers.filter((p) => p.isEnabled).map((p) => p.name),
+      });
+    } else {
+      debug.disable();
+    }
+
+    setIsDebugEnabled(!isDebugEnabled);
+  };
+
+  const DebugLogs = () => {
+    const [logs, setLogs] = useState(debug.getLogs());
+    const [selectedLevel, setSelectedLevel] = useState<LogLevel | 'all'>('all');
+    const [selectedCategory, setSelectedCategory] = useState<LogEntry['category'] | 'all'>('all');
+
+    useEffect(() => {
+      // Subscribe to new log entries
+      const unsubscribe = debug.addListener(() => {
+        setLogs(debug.getLogs());
+      });
+
+      return () => {
+        unsubscribe();
+      };
+    }, []);
+
+    const getLogStyle = (level: string) => {
+      switch (level) {
+        case 'error':
+          return 'text-red-600 dark:text-red-400';
+        case 'warn':
+          return 'text-yellow-600 dark:text-yellow-400';
+        case 'info':
+          return 'text-blue-600 dark:text-blue-400';
+        default:
+          return 'text-bolt-elements-textSecondary';
+      }
+    };
+
+    const formatData = (data: unknown): string => {
+      try {
+        if (typeof data === 'string') {
+          return data;
+        }
+
+        return JSON.stringify(data, null, 2);
+      } catch {
+        return '[Unable to format data]';
+      }
+    };
+
+    const filteredLogs = logs.filter((log: LogEntry) => {
+      const levelMatch = selectedLevel === 'all' || log.level === selectedLevel;
+      const categoryMatch = selectedCategory === 'all' || log.category === selectedCategory;
+
+      return levelMatch && categoryMatch;
+    });
+
+    const FilterButton = ({ value, active, onClick }: { value: string; active: boolean; onClick: () => void }) => (
+      <button
+        onClick={onClick}
+        className={classNames(
+          'px-2 py-1 text-xs rounded-md transition-colors',
+          active
+            ? 'bg-bolt-elements-background-depth-4 text-bolt-elements-textPrimary'
+            : 'bg-bolt-elements-background-depth-2 text-bolt-elements-textTertiary hover:text-bolt-elements-textSecondary',
+        )}
+      >
+        {value === 'all' ? 'ALL' : value.toUpperCase()}
+      </button>
+    );
+
+    return (
+      <div className="mt-4 max-h-[400px] overflow-y-auto rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-3 p-4">
+        <div className="flex flex-col space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-medium text-bolt-elements-textPrimary">Debug Logs</h3>
+            <button
+              onClick={() => debug.clearLogs()}
+              className="text-sm text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary"
+            >
+              Clear Logs
+            </button>
+          </div>
+
+          <div className="flex flex-col space-y-2">
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-bolt-elements-textSecondary">Level:</span>
+              <div className="flex space-x-1">
+                <FilterButton value="all" active={selectedLevel === 'all'} onClick={() => setSelectedLevel('all')} />
+                {['debug', 'info', 'warn', 'error'].map((level) => (
+                  <FilterButton
+                    key={level}
+                    value={level}
+                    active={selectedLevel === level}
+                    onClick={() => setSelectedLevel(level as LogLevel)}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-bolt-elements-textSecondary">Category:</span>
+              <div className="flex flex-wrap gap-1">
+                <FilterButton
+                  value="all"
+                  active={selectedCategory === 'all'}
+                  onClick={() => setSelectedCategory('all')}
+                />
+                {['network', 'state', 'user', 'system', 'error'].map((category) => (
+                  <FilterButton
+                    key={category}
+                    value={category}
+                    active={selectedCategory === category}
+                    onClick={() => setSelectedCategory(category as LogEntry['category'])}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {filteredLogs.length === 0 ? (
+              <div className="text-sm text-bolt-elements-textTertiary text-center py-4">
+                No logs match the current filters
+              </div>
+            ) : (
+              filteredLogs.map((log) => (
+                <div key={log.timestamp} className="text-sm">
+                  <span className="text-bolt-elements-textTertiary">
+                    {new Date(log.timestamp).toLocaleTimeString()}
+                  </span>
+                  <span className={classNames('ml-2 font-medium', getLogStyle(log.level))}>
+                    [{log.level.toUpperCase()}]
+                  </span>
+                  <span className="ml-2 text-bolt-elements-textPrimary">
+                    {log.category && `[${log.category}] `}
+                    {log.message}
+                  </span>
+                  {log.data && (
+                    <pre className="mt-1 ml-6 text-xs text-bolt-elements-textSecondary overflow-x-auto">
+                      {formatData(log.data)}
+                    </pre>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <RadixDialog.Root open={open}>
+    <RadixDialog.Root open={open} onOpenChange={onClose}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay asChild>
           <motion.div
-            className="bg-black/50 fixed inset-0 z-max"
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+            variants={dialogBackdropVariants}
             initial="closed"
             animate="open"
             exit="closed"
-            variants={dialogBackdropVariants}
           />
         </RadixDialog.Overlay>
         <RadixDialog.Content asChild>
           <motion.div
-            className="fixed top-[50%] left-[50%] z-max h-[85vh] w-[90vw] max-w-[900px] translate-x-[-50%] translate-y-[-50%] border border-bolt-elements-borderColor rounded-lg bg-gray-800 shadow-lg focus:outline-none overflow-hidden"
+            className="fixed left-1/2 top-1/2 z-50 h-[600px] w-[900px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 shadow-2xl"
+            variants={dialogVariants}
             initial="closed"
             animate="open"
             exit="closed"
-            variants={dialogVariants}
           >
-            <div className="flex h-full">
-              <div className="w-48 border-r border-bolt-elements-borderColor bg-gray-700 p-4 flex flex-col justify-between">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={classNames(
-                      'w-full flex items-center gap-2 px-4 py-3 rounded-lg text-left text-sm transition-all mb-2',
-                      activeTab === tab.id ? 'bg-blue-600 text-white' : 'bg-gray-600 text-gray-200 hover:bg-blue-500',
-                    )}
-                  >
-                    <div className={tab.icon} />
-                    {tab.label}
-                  </button>
-                ))}
-                <div className="mt-auto flex flex-col gap-2">
-                  <a
-                    href="https://github.com/coleam00/bolt.new-any-llm"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-500 transition-colors duration-200"
-                  >
-                    GitHub
-                  </a>
-                  <a
-                    href="https://coleam00.github.io/bolt.new-any-llm"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-500 transition-colors duration-200"
-                  >
-                    Docs
-                  </a>
-                </div>
+            <div className="flex h-full flex-col">
+              <div className="flex items-center justify-between border-b border-bolt-elements-borderColor p-6">
+                <DialogTitle className="text-2xl font-semibold text-bolt-elements-textPrimary">Settings</DialogTitle>
+                <IconButton onClick={onClose} icon="i-ph:x" />
               </div>
 
-              <div className="flex-1 flex flex-col p-8">
-                <DialogTitle className="flex-shrink-0 text-lg font-semibold text-white">Settings</DialogTitle>
-                <div className="flex-1 overflow-y-auto">
-                  {activeTab === 'chat-history' && (
-                    <div className="p-4">
-                      <h3 className="text-lg font-medium text-white mb-4">Chat History</h3>
-                      <button
-                        onClick={handleExportAllChats}
-                        className="bg-blue-500 text-white rounded-lg px-4 py-2 hover:bg-blue-600 mb-4 transition-colors duration-200"
-                      >
-                        Export All Chats
-                      </button>
+              <div className="flex flex-1 gap-4 overflow-hidden p-6">
+                <div className="flex w-48 flex-col gap-2">
+                  {tabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={classNames(
+                        'flex items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm font-medium transition-all duration-200',
+                        activeTab === tab.id
+                          ? 'bg-bolt-elements-background-depth-4 text-bolt-elements-textPrimary shadow-sm'
+                          : 'text-bolt-elements-textSecondary hover:bg-bolt-elements-background-depth-3 hover:text-bolt-elements-textPrimary',
+                      )}
+                    >
+                      <span className={classNames(tab.icon, 'text-lg')} />
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
 
-                      <div className="bg-red-500 text-white rounded-lg p-4 mb-4">
-                        <h4 className="font-semibold">Danger Area</h4>
-                        <p className="mb-2">This action cannot be undone!</p>
+                <div className="flex-1 overflow-y-auto rounded-xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-1 p-6">
+                  {activeTab === 'chat-history' && (
+                    <div className="flex flex-col gap-6">
+                      <div>
+                        <h2 className="mb-2 text-lg font-medium text-bolt-elements-textPrimary">Chat History</h2>
+                        <button
+                          onClick={handleExportAllChats}
+                          className="inline-flex items-center gap-2 rounded-lg bg-bolt-elements-button-backgroundPrimary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-bolt-elements-button-backgroundPrimaryHover"
+                        >
+                          <span className="i-ph:download" />
+                          Export All Chats
+                        </button>
+                      </div>
+
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-6 dark:border-red-900/50 dark:bg-red-950/50">
+                        <h3 className="mb-2 text-lg font-medium text-red-700 dark:text-red-400">Danger Area</h3>
+                        <p className="mb-4 text-sm text-red-600 dark:text-red-300">This action cannot be undone!</p>
                         <button
                           onClick={handleDeleteAllChats}
                           disabled={isDeleting}
-                          className={classNames(
-                            'bg-red-700 text-white rounded-lg px-4 py-2 transition-colors duration-200',
-                            isDeleting ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-800',
-                          )}
+                          className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
                         >
-                          {isDeleting ? 'Deleting...' : 'Delete All Chats'}
+                          {isDeleting ? (
+                            <>
+                              <span className="i-ph:spinner animate-spin" />
+                              Deleting...
+                            </>
+                          ) : (
+                            <>
+                              <span className="i-ph:trash" />
+                              Delete All Chats
+                            </>
+                          )}
                         </button>
                       </div>
                     </div>
                   )}
+
                   {activeTab === 'providers' && (
-                    <div className="p-4">
-                      <h3 className="text-lg font-medium text-white mb-4">Providers</h3>
-                      <input
-                        type="text"
-                        placeholder="Search providers..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="mb-4 p-2 rounded border border-gray-300 w-full"
-                      />
-                      {filteredProviders.map((provider) => (
-                        <div
-                          key={provider.name}
-                          className="flex flex-col mb-6 provider-item hover:bg-gray-600 p-4 rounded-lg"
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-white">{provider.name}</span>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                              <input
-                                type="checkbox"
-                                className="sr-only"
-                                checked={provider.isEnabled}
-                                onChange={() => handleToggleProvider(provider.name)}
-                              />
-                              <div className="w-11 h-6 bg-gray-300 rounded-full shadow-inner"></div>
-                              <div
-                                className={`absolute left-0 w-6 h-6 bg-white rounded-full shadow transition-transform duration-200 ease-in-out ${
-                                  provider.isEnabled ? 'transform translate-x-full bg-green-500' : ''
-                                }`}
-                              ></div>
-                            </label>
+                    <div className="flex flex-col gap-6">
+                      <div>
+                        <h2 className="mb-4 text-lg font-medium text-bolt-elements-textPrimary">AI Providers</h2>
+                        <div className="relative mb-4">
+                          <input
+                            type="text"
+                            placeholder="Search providers..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 px-4 py-2 pl-10 text-sm text-bolt-elements-textPrimary placeholder-bolt-elements-textTertiary focus:outline-none focus:ring-2 focus:ring-bolt-elements-button-backgroundPrimary/50"
+                          />
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-bolt-elements-textTertiary i-ph:magnifying-glass" />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          {filteredProviders.map((provider) => (
+                            <div
+                              key={provider.name}
+                              className="flex items-center justify-between rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-4"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-bolt-elements-background-depth-4">
+                                  {getProviderIcon(provider.name)}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h3 className="font-medium text-bolt-elements-textPrimary truncate">
+                                    {provider.name}
+                                  </h3>
+                                  {URL_CONFIGURABLE_PROVIDERS.includes(provider.name) && (
+                                    <input
+                                      type="text"
+                                      value={baseUrls[provider.name]}
+                                      onChange={(e) => handleBaseUrlChange(provider.name, e.target.value)}
+                                      placeholder="Enter base URL"
+                                      className="mt-2 w-full rounded-md border border-bolt-elements-borderColor bg-bolt-elements-background-depth-3 px-3 py-1 text-sm text-bolt-elements-textPrimary placeholder-bolt-elements-textTertiary focus:outline-none focus:ring-2 focus:ring-bolt-elements-button-backgroundPrimary/50"
+                                    />
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span
+                                  className={classNames(
+                                    'text-sm font-medium',
+                                    provider.isEnabled
+                                      ? 'text-green-600 dark:text-green-400'
+                                      : 'text-bolt-elements-textTertiary',
+                                  )}
+                                >
+                                  {provider.isEnabled ? 'Enabled' : 'Disabled'}
+                                </span>
+                                <button
+                                  onClick={() => handleToggleProvider(provider.name)}
+                                  className={classNames(
+                                    'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-bolt-elements-button-backgroundPrimary focus:ring-offset-2',
+                                    provider.isEnabled
+                                      ? 'bg-green-500 dark:bg-green-600'
+                                      : 'bg-gray-200 dark:bg-gray-600',
+                                  )}
+                                  role="switch"
+                                  aria-checked={provider.isEnabled}
+                                >
+                                  <span
+                                    className={classNames(
+                                      'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                                      provider.isEnabled ? 'translate-x-5' : 'translate-x-0',
+                                    )}
+                                  />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'features' && (
+                    <div className="flex flex-col gap-6">
+                      <div>
+                        <h2 className="text-lg font-medium text-bolt-elements-textPrimary">Developer Tools</h2>
+                        <p className="mt-1 text-sm text-bolt-elements-textSecondary">
+                          Advanced settings for debugging and development
+                        </p>
+                        <div className="mt-4 space-y-4">
+                          <div className="flex items-center justify-between rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-4">
+                            <div>
+                              <h3 className="font-medium text-bolt-elements-textPrimary">Debug Mode</h3>
+                              <p className="text-sm text-bolt-elements-textSecondary">
+                                Enable detailed error messages and debugging information
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span
+                                className={classNames(
+                                  'text-sm font-medium',
+                                  isDebugEnabled
+                                    ? 'text-green-600 dark:text-green-400'
+                                    : 'text-bolt-elements-textTertiary',
+                                )}
+                              >
+                                {isDebugEnabled ? 'Enabled' : 'Disabled'}
+                              </span>
+                              <button
+                                onClick={handleDebugToggle}
+                                className={classNames(
+                                  'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-bolt-elements-button-backgroundPrimary focus:ring-offset-2',
+                                  isDebugEnabled ? 'bg-green-500 dark:bg-green-600' : 'bg-gray-200 dark:bg-gray-600',
+                                )}
+                                role="switch"
+                                aria-checked={isDebugEnabled}
+                              >
+                                <span
+                                  className={classNames(
+                                    'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                                    isDebugEnabled ? 'translate-x-5' : 'translate-x-0',
+                                  )}
+                                />
+                              </button>
+                            </div>
                           </div>
 
-                          {/* Base URL input for configurable providers */}
-                          {URL_CONFIGURABLE_PROVIDERS.includes(provider.name) && provider.isEnabled && (
-                            <div className="mt-2">
-                              <label className="block text-sm text-gray-300 mb-1">Base URL:</label>
-                              <input
-                                type="text"
-                                value={baseUrls[provider.name]}
-                                onChange={(e) => handleBaseUrlChange(provider.name, e.target.value)}
-                                placeholder={`Enter ${provider.name} base URL`}
-                                className="w-full p-2 rounded border border-gray-600 bg-gray-700 text-white text-sm"
-                              />
+                          <div className="flex items-center justify-between rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-4">
+                            <div>
+                              <h3 className="font-medium text-bolt-elements-textPrimary">Console Logging</h3>
+                              <p className="text-sm text-bolt-elements-textSecondary">
+                                Show detailed logs in browser console
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span
+                                className={classNames(
+                                  'text-sm font-medium',
+                                  isLoggingEnabled
+                                    ? 'text-green-600 dark:text-green-400'
+                                    : 'text-bolt-elements-textTertiary',
+                                )}
+                              >
+                                {isLoggingEnabled ? 'Enabled' : 'Disabled'}
+                              </span>
+                              <button
+                                onClick={() => setIsLoggingEnabled(!isLoggingEnabled)}
+                                className={classNames(
+                                  'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-bolt-elements-button-backgroundPrimary focus:ring-offset-2',
+                                  isLoggingEnabled ? 'bg-green-500 dark:bg-green-600' : 'bg-gray-200 dark:bg-gray-600',
+                                )}
+                                role="switch"
+                                aria-checked={isLoggingEnabled}
+                              >
+                                <span
+                                  className={classNames(
+                                    'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                                    isLoggingEnabled ? 'translate-x-5' : 'translate-x-0',
+                                  )}
+                                />
+                              </button>
+                            </div>
+                          </div>
+
+                          {isDebugEnabled && (
+                            <div className="rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-4">
+                              <h3 className="font-medium text-bolt-elements-textPrimary">Debug Information</h3>
+                              <div className="mt-2">
+                                <pre className="overflow-auto text-sm text-bolt-elements-textSecondary">
+                                  <code>
+                                    {JSON.stringify(
+                                      {
+                                        version: commit.commit,
+                                        os: navigator.platform,
+                                        browser: navigator.userAgent,
+                                        providers: providers.filter((p) => p.isEnabled).map((p) => p.name),
+                                        baseUrls: {
+                                          ...baseUrls,
+                                          OpenAI: process.env.REACT_APP_OPENAI_URL,
+                                        },
+                                      },
+                                      null,
+                                      2,
+                                    )}
+                                  </code>
+                                </pre>
+                              </div>
                             </div>
                           )}
                         </div>
-                      ))}
-                    </div>
-                  )}
-                  {activeTab === 'features' && (
-                    <div className="p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-white">Debug Info</span>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            className="sr-only"
-                            checked={isDebugEnabled}
-                            onChange={() => setIsDebugEnabled(!isDebugEnabled)}
-                          />
-                          <div className="w-11 h-6 bg-gray-300 rounded-full shadow-inner"></div>
-                          <div
-                            className={`absolute left-0 w-6 h-6 bg-white rounded-full shadow transition-transform duration-200 ease-in-out ${
-                              isDebugEnabled ? 'transform translate-x-full bg-green-500' : ''
-                            }`}
-                          ></div>
-                        </label>
                       </div>
-                      <div className="feature-row">{/* Your feature content here */}</div>
                     </div>
                   )}
-                  {activeTab === 'debug' && isDebugEnabled && (
-                    <div className="p-4">
-                      <h3 className="text-lg font-medium text-white mb-4">Debug Tab</h3>
-                      <button
-                        onClick={handleCopyToClipboard}
-                        className="bg-blue-500 text-white rounded-lg px-4 py-2 hover:bg-blue-600 mb-4 transition-colors duration-200"
-                      >
-                        Copy to Clipboard
-                      </button>
 
-                      <h4 className="text-md font-medium text-white">System Information</h4>
-                      <p className="text-white">OS: {navigator.platform}</p>
-                      <p className="text-white">Browser: {navigator.userAgent}</p>
-
-                      <h4 className="text-md font-medium text-white mt-4">Active Features</h4>
-                      <ul>
-                        {providers
-                          .filter((provider) => provider.isEnabled)
-                          .map((provider) => (
-                            <li key={provider.name} className="text-white">
-                              {provider.name}
-                            </li>
-                          ))}
-                      </ul>
-
-                      <h4 className="text-md font-medium text-white mt-4">Base URLs</h4>
-                      <ul>
-                        <li className="text-white">Ollama: {process.env.REACT_APP_OLLAMA_URL}</li>
-                        <li className="text-white">OpenAI: {process.env.REACT_APP_OPENAI_URL}</li>
-                        <li className="text-white">LM Studio: {process.env.REACT_APP_LM_STUDIO_URL}</li>
-                      </ul>
-
-                      <h4 className="text-md font-medium text-white mt-4">Version Information</h4>
-                      <p className="text-white">Version Hash: {versionHash}</p>
+                  {activeTab === 'debug' && (
+                    <div className="flex flex-col gap-6">
+                      <h2 className="text-lg font-medium text-bolt-elements-textPrimary">Debug Information</h2>
+                      <div className="rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-4">
+                        <pre className="text-sm text-bolt-elements-textSecondary">
+                          <code>{JSON.stringify(commit, null, 2)}</code>
+                        </pre>
+                      </div>
                     </div>
                   )}
+                  {isDebugEnabled && <DebugLogs />}
                 </div>
               </div>
             </div>
-            <RadixDialog.Close asChild onClick={onClose}>
-              <IconButton icon="i-ph:x" className="absolute top-[10px] right-[10px]" />
-            </RadixDialog.Close>
           </motion.div>
         </RadixDialog.Content>
       </RadixDialog.Portal>

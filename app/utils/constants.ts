@@ -456,6 +456,13 @@ async function getOpenRouterModels(): Promise<ModelInfo[]> {
     }));
 }
 
+interface LMStudioResponse {
+  data: Array<{
+    id: string;
+    [key: string]: any;
+  }>;
+}
+
 async function getLMStudioModels(): Promise<ModelInfo[]> {
   if (typeof window === 'undefined') {
     return [];
@@ -463,16 +470,49 @@ async function getLMStudioModels(): Promise<ModelInfo[]> {
 
   try {
     const baseUrl = import.meta.env.LMSTUDIO_API_BASE_URL || 'http://localhost:1234';
-    const response = await fetch(`${baseUrl}/v1/models`);
-    const data = (await response.json()) as any;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
 
-    return data.data.map((model: any) => ({
-      name: model.id,
-      label: model.id,
-      provider: 'LMStudio',
-    }));
+    try {
+      const response = await fetch(`${baseUrl}/v1/models`, {
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = (await response.json()) as LMStudioResponse;
+
+      return data.data.map((model: any) => ({
+        name: model.id,
+        label: model.id,
+        provider: 'LMStudio',
+        maxTokenAllowed: 8000,
+      }));
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch (e) {
-    console.error('Error getting LMStudio models:', e);
+    // More descriptive error logging
+    if (e instanceof Error) {
+      if (e.name === 'AbortError') {
+        console.error('LMStudio connection timed out. Is LMStudio running on port 1234?');
+      } else if (e.name === 'TypeError' && e.message.includes('Failed to fetch')) {
+        console.error(
+          'Could not connect to LMStudio. Please make sure LMStudio is running and accessible at port 1234',
+        );
+      } else {
+        console.error('Error getting LMStudio models:', e.message);
+      }
+    }
+
     return [];
   }
 }

@@ -12,6 +12,18 @@ import { HistoryItem } from './HistoryItem';
 import { binDates } from './date-binning';
 import { useSearchFilter } from '~/lib/hooks/useSearchFilter';
 
+const formatDateTime = (date: Date): string => {
+  const options: Intl.DateTimeFormatOptions = {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  };
+  return new Intl.DateTimeFormat('en-US', options).format(date);
+};
+
 const menuVariants = {
   closed: {
     opacity: 0,
@@ -42,6 +54,15 @@ export const Menu = () => {
   const [open, setOpen] = useState(false);
   const [dialogContent, setDialogContent] = useState<DialogContent>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [currentDateTime, setCurrentDateTime] = useState<string>(formatDateTime(new Date()));
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentDateTime(formatDateTime(new Date()));
+    }, 60000); // Update every minute instead of every second
+
+    return () => clearInterval(interval);
+  }, []);
 
   const { filteredItems: filteredList, handleSearchChange } = useSearchFilter({
     items: list,
@@ -126,7 +147,15 @@ export const Menu = () => {
       variants={menuVariants}
       className="flex selection-accent flex-col side-menu fixed top-0 w-[350px] h-full bg-bolt-elements-background-depth-2 border-r rounded-r-3xl border-bolt-elements-borderColor z-sidebar shadow-xl shadow-bolt-elements-sidebar-dropdownShadow text-sm"
     >
-      <div className="flex items-center h-[var(--header-height)]">{/* Placeholder */}</div>
+      <div className="flex flex-col">
+        <div className="flex items-center h-[var(--header-height)] px-4">{/* Logo placeholder */}</div>
+        <div className="px-4 py-2 text-bolt-elements-textPrimary text-sm border-b border-bolt-elements-borderColor">
+          <div className="flex items-center gap-2">
+            <span className="i-ph:clock-duotone"></span>
+            {currentDateTime}
+          </div>
+        </div>
+      </div>
       <div className="flex-1 flex flex-col h-full w-full overflow-hidden">
         <div className="p-4 select-none">
           <a

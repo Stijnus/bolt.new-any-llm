@@ -2,6 +2,7 @@ import type { ProviderInfo } from '~/types/model';
 import type { ModelInfo } from '~/utils/types';
 import { useEffect, useState } from 'react';
 import Cookies from 'js-cookie';
+import { ClientOnly } from 'remix-utils/client-only';
 
 interface ModelSelectorProps {
   model?: string;
@@ -13,7 +14,7 @@ interface ModelSelectorProps {
   apiKeys: Record<string, string>;
 }
 
-export const ModelSelector = ({
+const ModelSelectorContent = ({
   model,
   setModel,
   provider,
@@ -120,7 +121,7 @@ export const ModelSelector = ({
         className="flex-1 p-2 rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-prompt-background text-bolt-elements-textPrimary focus:outline-none focus:ring-2 focus:ring-bolt-elements-focus transition-all lg:max-w-[70%]"
       >
         {[...modelList]
-          .filter((e) => e.provider == provider?.name && e.name)
+          .filter((e) => e.provider === provider?.name && e.name)
           .map((modelOption) => (
             <option key={modelOption.name} value={modelOption.name}>
               {modelOption.label}
@@ -129,4 +130,8 @@ export const ModelSelector = ({
       </select>
     </div>
   );
+};
+
+export const ModelSelector = (props: ModelSelectorProps) => {
+  return <ClientOnly fallback={<div>Loading...</div>}>{() => <ModelSelectorContent {...props} />}</ClientOnly>;
 };
