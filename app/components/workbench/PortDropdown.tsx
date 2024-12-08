@@ -8,7 +8,7 @@ interface PortDropdownProps {
   isDropdownOpen: boolean;
   setIsDropdownOpen: (value: boolean) => void;
   setHasSelectedPreview: (value: boolean) => void;
-  toggleDropdownOpen: (value: boolean) => void;
+
   previews: PreviewInfo[];
 }
 
