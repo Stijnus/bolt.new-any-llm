@@ -3,6 +3,7 @@ import { getModel } from '~/lib/.server/llm/model';
 import { MAX_TOKENS } from './constants';
 import { getSystemPrompt } from './prompts';
 import { DEFAULT_MODEL, DEFAULT_PROVIDER, getModelList, MODEL_REGEX, PROVIDER_REGEX } from '~/utils/constants';
+import { trackTokenUsage } from './token-counter';
 
 interface ToolResult<Name extends string, Args, Result> {
   toolCallId: string;
@@ -84,8 +85,10 @@ export async function streamText(
   });
 
   const modelDetails = MODEL_LIST.find((m) => m.name === currentModel);
-
   const dynamicMaxTokens = modelDetails && modelDetails.maxTokenAllowed ? modelDetails.maxTokenAllowed : MAX_TOKENS;
+
+  // Track token usage after processing messages
+  trackTokenUsage(processedMessages, currentModel, currentProvider);
 
   return _streamText({
     model: getModel(currentProvider, currentModel, env, apiKeys) as any,

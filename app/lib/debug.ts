@@ -8,12 +8,15 @@ export type LogEntry = {
   trace?: string;
 };
 
+const isClient = typeof window !== 'undefined';
+
 class DebugManager {
   private static _instance: DebugManager | null = null;
   private _logs: LogEntry[] = [];
   private _maxLogs: number = 100;
   private _maxDataSize: number = 50 * 1024;
   private _isEnabled: boolean = false;
+  private _showLogsInDebugTabOnly: boolean = true;
   private _listeners: Set<(entry: LogEntry) => void> = new Set();
   private _originalFetch: typeof fetch | null = null;
   private _originalConsole = {
@@ -25,14 +28,20 @@ class DebugManager {
   private _cleanupInterval: NodeJS.Timeout | null = null;
 
   private constructor() {
-    this._isEnabled = localStorage.getItem('devDebugEnabled') === 'true';
+    if (isClient) {
+      this._isEnabled = localStorage.getItem('devDebugEnabled') === 'true';
 
-    if (this._isEnabled) {
-      this._setupDebugMode();
+      if (this._isEnabled) {
+        this._setupDebugMode();
+      }
     }
   }
 
   private _setupDebugMode() {
+    if (!isClient) {
+      return;
+    }
+
     this._interceptNetworkCalls();
     this._interceptConsole();
     this._setupErrorListeners();
@@ -40,13 +49,17 @@ class DebugManager {
   }
 
   private _teardownDebugMode() {
+    if (!isClient) {
+      return;
+    }
+
     this._restoreNetworkCalls();
     this._restoreConsole();
     this._removeErrorListeners();
   }
 
   private _interceptNetworkCalls() {
-    if (typeof window === 'undefined') {
+    if (!isClient) {
       return;
     }
 
@@ -132,7 +145,7 @@ class DebugManager {
   }
 
   private _setupErrorListeners() {
-    if (typeof window === 'undefined') {
+    if (!isClient) {
       return;
     }
 
@@ -154,7 +167,7 @@ class DebugManager {
   }
 
   private _removeErrorListeners() {
-    if (typeof window === 'undefined') {
+    if (!isClient) {
       return;
     }
 
@@ -197,7 +210,19 @@ class DebugManager {
     return DebugManager._instance;
   }
 
-  enable() {
+  isDebugEnabled(): boolean {
+    if (!isClient) {
+      return false;
+    }
+
+    return this._isEnabled;
+  }
+
+  enableDebug() {
+    if (!isClient) {
+      return;
+    }
+
     this._isEnabled = true;
     localStorage.setItem('devDebugEnabled', 'true');
     this._setupDebugMode();
@@ -216,13 +241,11 @@ class DebugManager {
     });
   }
 
-  disable() {
-    if (this._cleanupInterval) {
-      clearInterval(this._cleanupInterval);
-      this._cleanupInterval = null;
+  disableDebug() {
+    if (!isClient) {
+      return;
     }
 
-    this._log('info', 'system', 'Debug Mode Disabled');
     this._isEnabled = false;
     localStorage.setItem('devDebugEnabled', 'false');
     this._teardownDebugMode();
@@ -314,6 +337,14 @@ class DebugManager {
     return [...this._logs];
   }
 
+  getDebugTabLogs(): LogEntry[] {
+    return [...this._logs];
+  }
+
+  setShowLogsInDebugTabOnly(value: boolean) {
+    this._showLogsInDebugTabOnly = value;
+  }
+
   getLogsByCategory(category: LogEntry['category']): LogEntry[] {
     return this._logs.filter((log) => log.category === category);
   }
@@ -326,10 +357,6 @@ class DebugManager {
   addListener(callback: (entry: LogEntry) => void) {
     this._listeners.add(callback);
     return () => this._listeners.delete(callback);
-  }
-
-  isDebugEnabled(): boolean {
-    return this._isEnabled;
   }
 }
 

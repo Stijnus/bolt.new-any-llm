@@ -12,16 +12,20 @@ import commit from '~/commit.json';
 import Cookies from 'js-cookie';
 import { debug } from '~/lib/debug';
 import type { LogEntry, LogLevel } from '~/lib/debug';
+import { TokenUsage } from './TokenUsage';
+import { setTokenLimit } from '~/lib/stores/tokenUsage';
+import type { ProviderInfo } from '~/types/model';
+import type { ModelInfo } from '~/utils/types';
 
 interface SettingsProps {
   open: boolean;
   onClose: () => void;
 }
 
-type TabType = 'chat-history' | 'providers' | 'features' | 'debug';
+type TabType = 'chat-history' | 'providers' | 'features' | 'debug' | 'token-usage';
 
 // Providers that support base URL configuration
-const URL_CONFIGURABLE_PROVIDERS = ['Ollama', 'LMStudio', 'OpenAILike'];
+const URL_CONFIGURABLE_PROVIDERS: string[] = ['Ollama', 'LMStudio', 'OpenAILike'];
 
 const getProviderIcon = (providerName: string) => {
   switch (providerName) {
@@ -105,6 +109,7 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
     { id: 'chat-history', label: 'Chat History', icon: 'i-ph:book' },
     { id: 'providers', label: 'Providers', icon: 'i-ph:key' },
     { id: 'features', label: 'Features', icon: 'i-ph:star' },
+    { id: 'token-usage', label: 'Token Usage', icon: 'i-ph:chart-line' },
     ...(isDebugEnabled ? [{ id: 'debug' as TabType, label: 'Debug Tab', icon: 'i-ph:bug' }] : []),
   ];
 
@@ -144,6 +149,22 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
         {},
       );
       Cookies.set('providers', JSON.stringify(enabledStates));
+
+      // Update token limits for enabled providers
+      const enabledProvider = newProviders.find((p) => p.name === providerName);
+
+      if (enabledProvider?.isEnabled) {
+        // Set token limit based on the provider's models
+        const providerInfo = providersList.find((p) => p.name === providerName) as unknown as ProviderInfo;
+
+        if (providerInfo && Array.isArray(providerInfo.staticModels)) {
+          const maxTokenLimit = Math.max(...providerInfo.staticModels.map((m: ModelInfo) => m.maxTokenAllowed));
+
+          if (maxTokenLimit > 0) {
+            setTokenLimit(providerName, maxTokenLimit);
+          }
+        }
+      }
 
       return newProviders;
     });
@@ -254,46 +275,47 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
     return undefined;
   }, [isLoggingEnabled]);
 
-  const handleDebugToggle = (): void => {
-    if (!isDebugEnabled) {
-      debug.enable();
-      debug.info('Debug mode enabled', {
-        version: commit.commit,
-        providers: providers.filter((p) => p.isEnabled).map((p) => p.name),
-      });
+  const handleToggleDebug = () => {
+    if (isDebugEnabled) {
+      debug.disableDebug();
     } else {
-      debug.disable();
+      debug.enableDebug();
     }
 
     setIsDebugEnabled(!isDebugEnabled);
   };
 
   const DebugLogs = () => {
-    const [logs, setLogs] = useState(debug.getLogs());
+    const [logs, setLogs] = useState(debug.getDebugTabLogs());
     const [selectedLevel, setSelectedLevel] = useState<LogLevel | 'all'>('all');
     const [selectedCategory, setSelectedCategory] = useState<LogEntry['category'] | 'all'>('all');
 
     useEffect(() => {
       // Subscribe to new log entries
       const unsubscribe = debug.addListener(() => {
-        setLogs(debug.getLogs());
+        // Only update logs if we're in the Debug Tab
+        if (activeTab === 'debug') {
+          setLogs(debug.getDebugTabLogs());
+        }
       });
 
       return () => {
         unsubscribe();
       };
-    }, []);
+    }, [activeTab]);
 
     const getLogStyle = (level: string) => {
       switch (level) {
         case 'error':
-          return 'text-red-600 dark:text-red-400';
+          return 'bg-bolt-elements-button-danger-background text-bolt-elements-button-danger-text';
         case 'warn':
-          return 'text-yellow-600 dark:text-yellow-400';
+          return 'bg-bolt-elements-messages-inlineCode-background text-bolt-elements-messages-inlineCode-text';
         case 'info':
-          return 'text-blue-600 dark:text-blue-400';
+          return 'bg-bolt-elements-button-primary-background text-bolt-elements-button-primary-text';
+        case 'debug':
+          return 'bg-bolt-elements-bg-depth-4 text-bolt-elements-textSecondary';
         default:
-          return 'text-bolt-elements-textSecondary';
+          return 'bg-bolt-elements-bg-depth-4 text-bolt-elements-textSecondary';
       }
     };
 
@@ -320,10 +342,10 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
       <button
         onClick={onClick}
         className={classNames(
-          'px-2 py-1 text-xs rounded-md transition-colors',
+          'px-2 py-1 text-xs rounded-md transition-all duration-200',
           active
-            ? 'bg-bolt-elements-background-depth-4 text-bolt-elements-textPrimary'
-            : 'bg-bolt-elements-background-depth-2 text-bolt-elements-textTertiary hover:text-bolt-elements-textSecondary',
+            ? 'bg-bolt-elements-item-backgroundActive text-bolt-elements-item-contentActive'
+            : 'bg-bolt-elements-bg-depth-2 text-bolt-elements-textTertiary hover:bg-bolt-elements-bg-depth-3 hover:text-bolt-elements-textSecondary',
         )}
       >
         {value === 'all' ? 'ALL' : value.toUpperCase()}
@@ -331,22 +353,22 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
     );
 
     return (
-      <div className="mt-4 max-h-[400px] overflow-y-auto rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-3 p-4">
-        <div className="flex flex-col space-y-4">
+      <div className="mt-4 max-h-[400px] overflow-y-auto rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-6">
+        <div className="flex flex-col space-y-6">
           <div className="flex items-center justify-between">
-            <h3 className="font-medium text-bolt-elements-textPrimary">Debug Logs</h3>
+            <h3 className="text-lg font-semibold text-bolt-elements-textPrimary">Debug Logs</h3>
             <button
               onClick={() => debug.clearLogs()}
-              className="text-sm text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary"
+              className="rounded-md px-3 py-1 text-sm text-bolt-elements-textTertiary hover:bg-bolt-elements-bg-depth-2 hover:text-bolt-elements-textSecondary transition-all duration-200"
             >
               Clear Logs
             </button>
           </div>
 
-          <div className="flex flex-col space-y-2">
-            <div className="flex items-center space-x-2">
-              <span className="text-xs text-bolt-elements-textSecondary">Level:</span>
-              <div className="flex space-x-1">
+          <div className="flex flex-col space-y-3">
+            <div className="flex items-center space-x-3">
+              <span className="text-sm font-medium text-bolt-elements-textSecondary">Level:</span>
+              <div className="flex space-x-2">
                 <FilterButton value="all" active={selectedLevel === 'all'} onClick={() => setSelectedLevel('all')} />
                 {['debug', 'info', 'warn', 'error'].map((level) => (
                   <FilterButton
@@ -359,9 +381,9 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
               </div>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <span className="text-xs text-bolt-elements-textSecondary">Category:</span>
-              <div className="flex flex-wrap gap-1">
+            <div className="flex items-center space-x-3">
+              <span className="text-sm font-medium text-bolt-elements-textSecondary">Category:</span>
+              <div className="flex flex-wrap gap-2">
                 <FilterButton
                   value="all"
                   active={selectedCategory === 'all'}
@@ -379,24 +401,27 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             {filteredLogs.length === 0 ? (
-              <div className="text-sm text-bolt-elements-textTertiary text-center py-4">
+              <div className="rounded-md bg-bolt-elements-background-depth-3 text-sm text-bolt-elements-textTertiary text-center py-6">
                 No logs match the current filters
               </div>
             ) : (
               filteredLogs.map((log) => (
-                <div key={log.timestamp} className="text-sm">
-                  <span className="text-bolt-elements-textTertiary">
-                    {new Date(log.timestamp).toLocaleTimeString()}
-                  </span>
-                  <span className={classNames('ml-2 font-medium', getLogStyle(log.level))}>
-                    [{log.level.toUpperCase()}]
-                  </span>
-                  <span className="ml-2 text-bolt-elements-textPrimary">
-                    {log.category && `[${log.category}] `}
-                    {log.message}
-                  </span>
+                <div
+                  key={log.timestamp}
+                  className="rounded-md bg-bolt-elements-background-depth-3 p-3 text-sm space-y-1"
+                >
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono text-bolt-elements-textTertiary">
+                      {new Date(log.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span className={classNames('px-2 py-0.5 rounded-md text-xs font-medium', getLogStyle(log.level))}>
+                      {log.level.toUpperCase()}
+                    </span>
+                    <span className="text-bolt-elements-textSecondary">[{log.category}]</span>
+                  </div>
+                  <div className="text-bolt-elements-textPrimary whitespace-pre-wrap break-words">{log.message}</div>
                   {log.data && (
                     <pre className="mt-1 ml-6 text-xs text-bolt-elements-textSecondary overflow-x-auto">
                       {formatData(log.data)}
@@ -597,7 +622,7 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
                                 {isDebugEnabled ? 'Enabled' : 'Disabled'}
                               </span>
                               <button
-                                onClick={handleDebugToggle}
+                                onClick={handleToggleDebug}
                                 className={classNames(
                                   'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-bolt-elements-button-backgroundPrimary focus:ring-offset-2',
                                   isDebugEnabled ? 'bg-green-500 dark:bg-green-600' : 'bg-gray-200 dark:bg-gray-600',
@@ -682,17 +707,29 @@ export const Settings = ({ open, onClose }: SettingsProps) => {
                     </div>
                   )}
 
-                  {activeTab === 'debug' && (
+                  {activeTab === 'token-usage' && (
                     <div className="flex flex-col gap-6">
-                      <h2 className="text-lg font-medium text-bolt-elements-textPrimary">Debug Information</h2>
-                      <div className="rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-4">
-                        <pre className="text-sm text-bolt-elements-textSecondary">
-                          <code>{JSON.stringify(commit, null, 2)}</code>
-                        </pre>
+                      <div>
+                        <h2 className="text-lg font-medium text-bolt-elements-textPrimary">Token Usage</h2>
+                        <p className="mt-1 text-sm text-bolt-elements-textSecondary">
+                          Track and monitor your token consumption
+                        </p>
+                        <TokenUsage className="mt-4" />
                       </div>
                     </div>
                   )}
-                  {isDebugEnabled && <DebugLogs />}
+
+                  {activeTab === 'debug' && (
+                    <div className="flex flex-col gap-6">
+                      <div>
+                        <h2 className="text-lg font-medium text-bolt-elements-textPrimary">Debug Information</h2>
+                        <p className="mt-1 text-sm text-bolt-elements-textSecondary">
+                          View detailed debug logs and information
+                        </p>
+                        <DebugLogs />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
