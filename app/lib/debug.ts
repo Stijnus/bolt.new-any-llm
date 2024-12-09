@@ -11,7 +11,8 @@ export type LogEntry = {
 class DebugManager {
   private static _instance: DebugManager | null = null;
   private _logs: LogEntry[] = [];
-  private _maxLogs: number = 1000;
+  private _maxLogs: number = 100;
+  private _maxDataSize: number = 50 * 1024;
   private _isEnabled: boolean = false;
   private _listeners: Set<(entry: LogEntry) => void> = new Set();
   private _originalFetch: typeof fetch | null = null;
@@ -21,6 +22,7 @@ class DebugManager {
     warn: console.warn,
     error: console.error,
   };
+  private _cleanupInterval: NodeJS.Timeout | null = null;
 
   private constructor() {
     this._isEnabled = localStorage.getItem('devDebugEnabled') === 'true';
@@ -62,51 +64,37 @@ class DebugManager {
     const [url, options] = args;
 
     try {
-      // Log request
       this._log('info', 'network', `API Request [${requestId}]`, {
         url,
         method: options?.method || 'GET',
-        headers: options?.headers,
-        body: options?.body ? JSON.parse(options.body as string) : undefined,
       });
 
-      // Call the original fetch with the correct 'this' context
       const originalResponse = await this._originalFetch!.apply(window, args);
       const duration = performance.now() - startTime;
 
-      // Create a clone for logging purposes
-      const responseForLogging = originalResponse.clone();
-
-      // Read and log the response data
-      let responseData;
-
-      try {
-        responseData = await responseForLogging.json();
-      } catch {
-        try {
-          responseData = await responseForLogging.text();
-        } catch {
-          responseData = 'Could not read response body';
-        }
-      }
-
-      // Log response
       this._log('info', 'network', `API Response [${requestId}]`, {
         duration: `${duration.toFixed(2)}ms`,
         status: originalResponse.status,
         statusText: originalResponse.statusText,
-        headers: Object.fromEntries(originalResponse.headers.entries()),
-        data: responseData,
       });
 
-      // Return the original response which hasn't been read yet
       return originalResponse;
-    } catch {
+    } catch (error: unknown) {
       const duration = performance.now() - startTime;
-      this._log('error', 'network', `API Error [${requestId}]`, {
-        duration: `${duration.toFixed(2)}ms`,
-      });
-      throw new Error(`API Error [${requestId}]`);
+
+      if (error instanceof Error) {
+        this._log('error', 'network', `API Error [${requestId}]`, {
+          duration: `${duration.toFixed(2)}ms`,
+          error: error.message,
+        });
+      } else {
+        this._log('error', 'network', `API Error [${requestId}]`, {
+          duration: `${duration.toFixed(2)}ms`,
+          error: 'An unknown error occurred',
+        });
+      }
+
+      throw error;
     }
   }
 
@@ -175,7 +163,6 @@ class DebugManager {
   }
 
   private _monitorStateChanges() {
-    // Monitor localStorage changes
     const originalSetItem = localStorage.setItem;
 
     localStorage.setItem = (key: string, value: string) => {
@@ -183,7 +170,6 @@ class DebugManager {
       originalSetItem.call(localStorage, key, value);
     };
 
-    // Monitor cookie changes
     try {
       const cookieDesc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
 
@@ -215,14 +201,27 @@ class DebugManager {
     this._isEnabled = true;
     localStorage.setItem('devDebugEnabled', 'true');
     this._setupDebugMode();
+
+    this._cleanupInterval = setInterval(
+      () => {
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        this._logs = this._logs.filter((log) => new Date(log.timestamp) > oneHourAgo);
+      },
+      5 * 60 * 1000,
+    );
+
     this._log('info', 'system', 'Debug Mode Enabled', {
       timestamp: new Date().toISOString(),
       userAgent: navigator.userAgent,
-      platform: navigator.platform,
     });
   }
 
   disable() {
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
+      this._cleanupInterval = null;
+    }
+
     this._log('info', 'system', 'Debug Mode Disabled');
     this._isEnabled = false;
     localStorage.setItem('devDebugEnabled', 'false');
@@ -235,60 +234,58 @@ class DebugManager {
       return;
     }
 
-    // Sanitize data to handle Error objects and circular references
-    const sanitizeData = (obj: any): any => {
-      try {
-        if (obj instanceof Error) {
-          return {
-            name: obj.name,
-            message: obj.message,
-            stack: obj.stack,
-          };
-        }
+    const truncateData = (obj: any, maxSize: number = this._maxDataSize): any => {
+      const size = new TextEncoder().encode(JSON.stringify(obj)).length;
 
-        if (Array.isArray(obj)) {
-          return obj.map((item) => sanitizeData(item));
-        }
+      if (size <= maxSize) {
+        return obj;
+      }
 
-        if (obj && typeof obj === 'object') {
-          const sanitized: any = {};
+      if (typeof obj === 'string') {
+        return obj.substring(0, Math.floor(maxSize / 2)) + '... [truncated]';
+      }
 
-          for (const key in obj) {
-            try {
-              sanitized[key] = sanitizeData(obj[key]);
-            } catch {
-              sanitized[key] = '[Unable to serialize]';
-            }
+      if (Array.isArray(obj)) {
+        return obj.slice(0, 10).map((item) => truncateData(item, maxSize / 10));
+      }
+
+      if (obj && typeof obj === 'object') {
+        const truncated: any = {};
+        let currentSize = 0;
+
+        for (const [key, value] of Object.entries(obj)) {
+          if (currentSize >= maxSize) {
+            break;
           }
 
-          return sanitized;
+          truncated[key] = truncateData(value, maxSize / 4);
+          currentSize += new TextEncoder().encode(JSON.stringify(truncated[key])).length;
         }
 
-        return obj;
-      } catch {
-        return '[Unable to serialize data]';
+        return truncated;
       }
+
+      return obj;
     };
 
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
       category,
-      message: String(message),
-      data: data ? sanitizeData(data) : undefined,
-      trace: trace || new Error().stack?.split('\n').slice(1).join('\n') || undefined,
+      message: String(message).substring(0, 1000),
+      data: data ? truncateData(data) : undefined,
+      trace: trace ? trace.split('\n').slice(0, 5).join('\n') : undefined,
     };
 
-    this._logs.push(entry);
+    this._logs.unshift(entry);
 
     if (this._logs.length > this._maxLogs) {
-      this._logs.shift();
+      this._logs.pop();
     }
 
     this._listeners.forEach((listener) => listener(entry));
   }
 
-  // Public logging methods
   debug(message: string, data?: any) {
     this._log('debug', 'system', message, data);
   }
@@ -305,12 +302,10 @@ class DebugManager {
     this._log('error', 'system', message, data);
   }
 
-  // User interaction logging
   logUserAction(action: string, data?: any) {
     this._log('info', 'user', action, data);
   }
 
-  // State change logging
   logStateChange(component: string, data: { previous: any; current: any }) {
     this._log('info', 'state', `State Change: ${component}`, data);
   }
